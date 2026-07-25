@@ -420,6 +420,18 @@
     </div>
   </div>
 
+  <!-- ===== STORY READER (public story + follow) ===== -->
+  <div class="fullscreen" id="storyReaderScreen">
+    <div class="fs-top"><span class="back" onclick="closeFS('storyReaderScreen')">‹</span><span class="title">Story</span></div>
+    <div class="fs-body">
+      <div class="cover-preview" id="readerCover">—</div>
+      <h2 id="readerTitle" style="text-align:center; font-family:'Space Grotesk'; margin-bottom:6px;"></h2>
+      <p id="readerMeta" style="text-align:center; color:var(--ink-faint); font-size:12px; margin-bottom:18px;"></p>
+      <div class="btn ghost pill" id="followBtn" style="margin:0 auto 20px; display:block; width:140px; text-align:center;">Follow</div>
+      <p id="readerBlurb" style="font-size:13.5px; line-height:1.6; color:var(--ink-dim);"></p>
+    </div>
+  </div>
+
   <!-- ===== STORIES GRID (Wattpad "Stories" tab) ===== -->
   <div class="fullscreen" id="storiesScreen">
     <div class="fs-top"><span class="back" onclick="closeFS('storiesScreen')">‹</span><span class="title">Stories</span></div>
@@ -566,7 +578,33 @@ GENRES.forEach((g,gi)=>{
     });
   }
 });
-let following = new Set([AUTHORS[0], AUTHORS[2]]);
+let following = new Set(); // author profile ids the signed-in user follows (loaded from Supabase)
+let currentReaderStory = null;
+
+/* ---------------- LOAD REAL PUBLISHED STORIES ---------------- */
+async function loadPublicStories(){
+  if(!supa) return;
+  const { data, error } = await supa
+    .from('stories')
+    .select('*, profiles(id, display_name, handle), parts(published)')
+    .order('updated_at', {ascending:false});
+  if(error || !data) return;
+  const withPublished = data.filter(s => (s.parts||[]).some(p=>p.published));
+  if(!withPublished.length) return; // keep demo data until real stories exist
+  discoverStories = withPublished.map(s => ({
+    id: s.id, title: s.title, genre: s.genre,
+    author: s.profiles?.display_name || s.profiles?.handle || 'Unknown writer',
+    authorId: s.profiles?.id || null,
+    blurb: s.description || 'No description yet.',
+    cover: s.cover, status: s.completed ? "Completed" : "Ongoing",
+    isReal: true
+  }));
+}
+async function loadFollowing(){
+  if(!supa || !currentUser) { following = new Set(); return; }
+  const { data } = await supa.from('follows').select('author_id').eq('follower_id', currentUser.id);
+  following = new Set((data||[]).map(f=>f.author_id));
+}
 
 /* myBooks: {id,title,desc,cover,genre,tags,mature,completed,parts:[{title,body,published}]} */
 let myBooks = [];
@@ -643,6 +681,7 @@ function renderFeed(){
 function storyCard(s){
   const c = document.createElement('div');
   c.className = 'story-card';
+  c.onclick = ()=> openStoryReader(s);
   c.innerHTML = `
     <div class="cover-thumb" style="background:${s.cover}">${s.title.split(' ')[0]}</div>
     <div class="story-meta">
@@ -652,6 +691,42 @@ function storyCard(s){
       <p>${s.blurb}</p>
     </div>`;
   return c;
+}
+
+/* ---------------- STORY READER + FOLLOW ---------------- */
+function openStoryReader(s){
+  currentReaderStory = s;
+  document.getElementById('readerCover').style.background = s.cover;
+  document.getElementById('readerCover').textContent = s.title;
+  document.getElementById('readerTitle').textContent = s.title;
+  document.getElementById('readerMeta').textContent = `${s.genre} · ${s.status} · by ${s.author}`;
+  document.getElementById('readerBlurb').textContent = s.blurb;
+  renderFollowButton();
+  openFS('storyReaderScreen');
+}
+function renderFollowButton(){
+  const btn = document.getElementById('followBtn');
+  const s = currentReaderStory;
+  if(!s || !s.isReal || !s.authorId){
+    btn.textContent = 'Follow';
+    btn.onclick = ()=> alert("This is a demo story — following works once it's a real published story.");
+    return;
+  }
+  const isFollowing = following.has(s.authorId);
+  btn.textContent = isFollowing ? 'Following ✓' : 'Follow';
+  btn.onclick = ()=> toggleFollow(s.authorId);
+}
+async function toggleFollow(authorId){
+  if(!currentUser){ document.getElementById('storyReaderScreen').classList.remove('show'); openProfile(); return; }
+  if(!supa) return;
+  if(following.has(authorId)){
+    await supa.from('follows').delete().eq('follower_id', currentUser.id).eq('author_id', authorId);
+    following.delete(authorId);
+  } else {
+    await supa.from('follows').insert({follower_id: currentUser.id, author_id: authorId});
+    following.add(authorId);
+  }
+  renderFollowButton();
 }
 
 /* ---------------- SEARCH ---------------- */
@@ -892,16 +967,50 @@ async function savePart(publish){
 }
 
 /* ---------------- NOTIFICATIONS ---------------- */
-function renderNotifs(){
+async function renderNotifs(){
   const el = document.getElementById('notifList');
+  el.innerHTML = '<p class="hint">Loading...</p>';
+  const appItems = notifSeed.filter(n=>n.type==='app');
+  let items = [...appItems];
+
+  if(supa && currentUser && following.size){
+    const { data: parts } = await supa
+      .from('parts')
+      .select('title, published, updated_at, stories(title, author_id, profiles(display_name, handle))')
+      .eq('published', true)
+      .in('stories.author_id', [...following])
+      .order('updated_at', {ascending:false})
+      .limit(10);
+    const real = (parts||[])
+      .filter(p => p.stories && following.has(p.stories.author_id))
+      .map(p => ({
+        type:'follow',
+        m:`${p.stories.profiles?.display_name || p.stories.profiles?.handle || 'A writer you follow'} published "${p.title}" in "${p.stories.title}".`,
+        time: timeAgo(p.updated_at)
+      }));
+    items = [...real, ...appItems];
+  } else if(!currentUser){
+    items.unshift({type:'app', m:'Sign in and follow writers to see their updates here.', time:'now'});
+  }
+
   el.innerHTML = '';
-  notifSeed.forEach(n=>{
+  if(!items.length){ el.innerHTML = '<p class="hint">No notifications yet.</p>'; return; }
+  items.forEach(n=>{
     const row = document.createElement('div');
     row.className='notif-row';
     const label = n.type==='follow' ? 'Following' : 'Prism';
     row.innerHTML = `<div class="notif-dot" style="background:${n.type==='follow'?'var(--b)':'var(--ink-faint)'}"></div><div><p><b style="font-weight:600;">${label} · </b>${n.m}</p><span>${n.time}</span></div>`;
     el.appendChild(row);
   });
+}
+function timeAgo(iso){
+  if(!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff/60000);
+  if(mins < 60) return mins+'m';
+  const hrs = Math.floor(mins/60);
+  if(hrs < 24) return hrs+'h';
+  return Math.floor(hrs/24)+'d';
 }
 
 /* ---------------- PROFILE / LOGIN ---------------- */
@@ -925,11 +1034,13 @@ async function logout(){
   if(supa) await supa.auth.signOut();
   currentUser = null;
   myBooks = [];
+  following = new Set();
   document.getElementById('loginOptions').style.display='block';
   document.getElementById('profileLoggedIn').style.display='none';
   document.getElementById('profileTitle').textContent = 'Sign in to Prism';
   document.getElementById('avatarBtn').textContent = '?';
   renderWriteHome();
+  renderFeed();
 }
 
 async function applySession(session){
@@ -948,11 +1059,17 @@ async function applySession(session){
   document.getElementById('avatarBtn').textContent = currentUser.name[0].toUpperCase();
   document.getElementById('profileOverlay').classList.remove('show');
   await loadMyBooks();
+  await loadFollowing();
   renderWriteHome();
+  renderFeed();
+  if(document.getElementById('screen-search').style.display!=='none') renderSearch('');
 }
 
 async function initSupabase(){
   if(!supa) return;
+  await loadPublicStories();
+  renderGenreChips();
+  renderFeed();
   const { data: { session } } = await supa.auth.getSession();
   await applySession(session);
   supa.auth.onAuthStateChange((_event, session) => { applySession(session); });
