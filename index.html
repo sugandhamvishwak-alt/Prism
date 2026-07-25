@@ -537,7 +537,7 @@
    app switches from demo data to real accounts + real storage.
 */
 const SUPABASE_URL = "https://rbdgnrcqeeebgxnivcqj.supabase.co"; 
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJiZGducmNxZWVlYmd4bml2Y3FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5OTM0NjEsImV4cCI6MjEwMDU2OTQ2MX0.dSIFzqeafwcNV5RmT4j3yD40g8Pqi4uOWGXj6TgmXwk;
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJiZGducmNxZWVlYmd4bml2Y3FqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5OTM0NjEsImV4cCI6MjEwMDU2OTQ2MX0.dSIFzqeafwcNV5RmT4j3yD40g8Pqi4uOWGXj6TgmXwk";
 const supa = (SUPABASE_URL.startsWith("http"))
   ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
