@@ -3,7 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prism</title>
+<title>Prism — Every Story, In Full Spectrum</title>
+<meta name="description" content="Prism is a genre-balanced reading and writing app. Discover and write stories across crime, mystery, fantasy, sci-fi, and more — with a feed that never lets one genre crowd out the rest.">
+<meta name="keywords" content="Prism, reading app, writing app, story platform, fiction, chapters, genres, Wattpad alternative">
+<link rel="canonical" href="https://sugandhamvishwak-alt.github.io/Prism/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Prism — Every Story, In Full Spectrum">
+<meta property="og:description" content="A genre-balanced reading and writing app — discover and write across every genre, evenly.">
+<meta property="og:url" content="https://sugandhamvishwak-alt.github.io/Prism/">
+<meta property="og:image" content="https://sugandhamvishwak-alt.github.io/Prism/icons/icon-512.png">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Prism — Every Story, In Full Spectrum">
+<meta name="twitter:description" content="A genre-balanced reading and writing app — discover and write across every genre, evenly.">
+<meta name="twitter:image" content="https://sugandhamvishwak-alt.github.io/Prism/icons/icon-512.png">
+
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1c1c1f">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -417,6 +432,7 @@
         <p style="font-size:13px; color:var(--ink-dim); margin-bottom:14px;">Signed in as <b id="profileName" style="color:var(--ink);"></b></p>
         <div class="login-opt" onclick="logout()">Log out</div>
       </div>
+      <div id="authDebug" style="display:none; margin-top:16px; padding:10px; background:var(--bg-2); border:1px solid var(--line); border-radius:8px; font-family:monospace; font-size:10.5px; color:var(--ink-dim); line-height:1.6; white-space:pre-wrap; max-height:160px; overflow-y:auto;"></div>
     </div>
   </div>
 
@@ -1019,15 +1035,28 @@ document.getElementById('profileOverlay').addEventListener('click', e=>{
   if(e.target.id==='profileOverlay') e.currentTarget.classList.remove('show');
 });
 
+function appendDebug(line){
+  const el = document.getElementById('authDebug');
+  if(!el) return;
+  el.style.display = 'block';
+  const time = new Date().toLocaleTimeString();
+  el.textContent += `[${time}] ${line}\n`;
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('profileOverlay').classList.add('show');
+}
+
 async function login(provider){
   if(!supa){ alert("Add your Supabase URL and anon key at the top of the script first."); return; }
-  // Supabase's OAuth provider id for "X" is still "twitter"
   const providerId = provider === "X" ? "twitter" : provider.toLowerCase();
+  appendDebug(`Starting sign-in with ${providerId}...`);
   const { error } = await supa.auth.signInWithOAuth({
     provider: providerId,
     options: { redirectTo: window.location.href }
   });
-  if(error) alert("Sign-in failed: " + error.message);
+  if(error){
+    appendDebug(`signInWithOAuth ERROR: ${error.message}`);
+    alert("Sign-in failed: " + error.message);
+  }
 }
 
 async function logout(){
@@ -1044,35 +1073,50 @@ async function logout(){
 }
 
 async function applySession(session){
-  if(!session){ currentUser = null; renderWriteHome(); return; }
-  const user = session.user;
-  let { data: profile } = await supa.from('profiles').select('*').eq('id', user.id).single();
-  currentUser = {
-    id: user.id,
-    name: profile?.display_name || user.email || 'Reader',
-    handle: profile?.handle || (user.email ? user.email.split('@')[0] : 'reader')
-  };
-  document.getElementById('loginOptions').style.display='none';
-  document.getElementById('profileLoggedIn').style.display='block';
-  document.getElementById('profileName').textContent = currentUser.name;
-  document.getElementById('profileTitle').textContent = 'Your profile';
-  document.getElementById('avatarBtn').textContent = currentUser.name[0].toUpperCase();
-  document.getElementById('profileOverlay').classList.remove('show');
-  await loadMyBooks();
-  await loadFollowing();
-  renderWriteHome();
-  renderFeed();
-  if(document.getElementById('screen-search').style.display!=='none') renderSearch('');
+  try{
+    if(!session){ appendDebug('applySession: no session found.'); currentUser = null; renderWriteHome(); return; }
+    appendDebug(`applySession: session found for ${session.user?.email || session.user?.id}`);
+    const user = session.user;
+    let { data: profile, error: profileErr } = await supa.from('profiles').select('*').eq('id', user.id).single();
+    if(profileErr) appendDebug(`profiles lookup error: ${profileErr.message}`);
+    currentUser = {
+      id: user.id,
+      name: profile?.display_name || user.email || 'Reader',
+      handle: profile?.handle || (user.email ? user.email.split('@')[0] : 'reader')
+    };
+    document.getElementById('loginOptions').style.display='none';
+    document.getElementById('profileLoggedIn').style.display='block';
+    document.getElementById('profileName').textContent = currentUser.name;
+    document.getElementById('profileTitle').textContent = 'Your profile';
+    document.getElementById('avatarBtn').textContent = currentUser.name[0].toUpperCase();
+    appendDebug(`Signed in as ${currentUser.name} — UI updated.`);
+    await loadMyBooks();
+    await loadFollowing();
+    renderWriteHome();
+    renderFeed();
+    if(document.getElementById('screen-search').style.display!=='none') renderSearch('');
+  } catch(e){
+    appendDebug(`applySession EXCEPTION: ${e.message}`);
+  }
 }
 
 async function initSupabase(){
   if(!supa) return;
-  await loadPublicStories();
-  renderGenreChips();
-  renderFeed();
-  const { data: { session } } = await supa.auth.getSession();
-  await applySession(session);
-  supa.auth.onAuthStateChange((_event, session) => { applySession(session); });
+  try{
+    await loadPublicStories();
+    renderGenreChips();
+    renderFeed();
+    const { data: { session }, error } = await supa.auth.getSession();
+    if(error) appendDebug(`getSession ERROR: ${error.message}`);
+    appendDebug(`initSupabase: getSession returned session=${!!session}`);
+    await applySession(session);
+    supa.auth.onAuthStateChange((event, session) => {
+      appendDebug(`onAuthStateChange event=${event} session=${!!session}`);
+      applySession(session);
+    });
+  } catch(e){
+    appendDebug(`initSupabase EXCEPTION: ${e.message}`);
+  }
 }
 
 /* ---------------- INIT ---------------- */
